@@ -3,9 +3,20 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+import os
+
+from langchain.llms import OpenAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 
 from app import auth, models, schemas, security
 from app.db import get_db
+from app.models import User
+from ai.prompts import generate_context, qa_template
+
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
 
 router = APIRouter()
 
@@ -20,7 +31,9 @@ async def register(user_in: schemas.UserIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     hashed_password = security.get_password_hash(user_in.password)
-    db_user = models.User(**user_in.dict(exclude={"password"}), hashed_password=hashed_password)
+    db_user = models.User(
+        **user_in.dict(exclude={"password"}), hashed_password=hashed_password
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -47,11 +60,26 @@ async def login_for_access_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/conversation/")
+@router.post("/conversation/")
 async def read_conversation(
+    query: str,
     current_user: schemas.UserInDB = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
 ):
-    return {
-        "conversation": "This is a secure conversation!",
-        "current_user": current_user.username,
-    }
+    db_user = db.query(User).get(current_user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    context = generate_context(db_user)
+
+    llm = OpenAI(
+        temperature=0,
+        openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    )
+    prompt = PromptTemplate(
+        input_variables=["context", "question"], template=qa_template
+    )
+    chain = LLMChain(llm=llm, prompt=prompt)
+
+    response = chain.run(context=context, question=query)
+
+    return {"response": response}

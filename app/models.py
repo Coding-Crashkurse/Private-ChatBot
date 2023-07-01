@@ -3,7 +3,7 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import Integer, String
 
 from app.db import Base
-from app.schemas import UserLevel  # corrected import statement
+from app.schemas import UserLevel
 
 
 class User(Base):
